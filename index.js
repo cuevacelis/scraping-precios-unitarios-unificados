@@ -5,8 +5,7 @@ import {
   descripcionesColumnasPreciosUnitariosUnificados,
 } from "./lib/utils.js";
 import getDbPostgres from "./db/db-postgres.js";
-import dotenv from "dotenv";
-dotenv.config();
+process.loadEnvFile();
 
 async function obtenerDepartamentos() {
   const db = getDbPostgres();
