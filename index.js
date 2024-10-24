@@ -1,3 +1,4 @@
+process.loadEnvFile();
 import { chromium } from "playwright";
 import { promises as fs } from "fs";
 import {
@@ -5,7 +6,8 @@ import {
   descripcionesColumnasPreciosUnitariosUnificados,
 } from "./lib/utils.js";
 import getDbPostgres from "./db/db-postgres.js";
-process.loadEnvFile();
+import numeral from "numeral";
+import { DateTime } from "luxon";
 
 async function obtenerDepartamentos() {
   const db = getDbPostgres();
@@ -19,6 +21,31 @@ async function obtenerDepartamentos() {
     return departamentos;
   } catch (error) {
     console.error("Error al obtener los departamentos:", error);
+    throw error;
+  }
+}
+
+async function insertarPreciosEnDB(precios) {
+  const db = getDbPostgres();
+  try {
+    for (const precio of precios) {
+      await db
+        .insertInto("precio_recurso_recomendado")
+        .values({
+          codigo_area: precio.codigoArea,
+          dep_id: precio.dep_id,
+          precio: precio.precio,
+          fecha_publicacion: precio.fechaPublicacion,
+          nombre: precio.nombreRecurso,
+        })
+        .execute();
+      console.log(
+        `Precio insertado en la base de datos: ${precio.codigoRecurso} - ${precio.dep_nombre} - ${precio.nombreRecurso}`
+      );
+    }
+    console.log("Precios insertados en la base de datos.");
+  } catch (error) {
+    console.error("Error al insertar precios en la base de datos:", error);
     throw error;
   }
 }
@@ -40,10 +67,21 @@ async function extraerInformacionDePagina(url) {
     const departamentosDB = await obtenerDepartamentos();
 
     await frame.waitForSelector("table");
-    const fechaPublicacion = await page.$eval(
+
+    // Si fechaPublicacionRaw ya está en un formato reconocible, entonces puedes convertirla a una fecha en UTC
+    const fechaPublicacionRaw = await page.$eval(
       "small.text-primary span",
       (element) => element.textContent?.trim() || "Fecha no disponible"
     );
+
+    // Usar Luxon para convertir la fecha al formato correcto en UTC
+    const fechaPublicacionUTC = DateTime.fromFormat(
+      fechaPublicacionRaw,
+      "dd/MM/yyyy"
+    )
+      .toUTC()
+      .toFormat("yyyy-MM-dd HH:mm:ss.SSS");
+
     let precios = [];
 
     // Extraer precios de la tabla, ignorando las primeras dos filas
@@ -51,7 +89,7 @@ async function extraerInformacionDePagina(url) {
       return Array.from(rows)
         .slice(2)
         .map((row) => {
-          const columnas = row.querySelectorAll("td"); // Asegurarse de que sea un elemento HTML
+          const columnas = row.querySelectorAll("td");
           return Array.from(columnas).map(
             (col) => col.textContent?.trim() || null
           );
@@ -67,11 +105,20 @@ async function extraerInformacionDePagina(url) {
             codigoRecurso: codigoRecurso1a6,
             codigoArea: (index + 1).toString(),
             dep_id: departamentosDB.find((d) =>
-              d.dep_nombre.toUpperCase().includes(geo.toUpperCase())
+              d.dep_nombre
+                .normalize("NFD") // Descomponer caracteres con diacríticos (tildes)
+                .replace(/[\u0300-\u036f]/g, "") // Eliminar los diacríticos
+                .toUpperCase()
+                .includes(
+                  geo
+                    .normalize("NFD") // Descomponer caracteres con diacríticos (tildes)
+                    .replace(/[\u0300-\u036f]/g, "") // Eliminar los diacríticos
+                    .toUpperCase()
+                )
             )?.dep_id,
             dep_nombre: geo,
-            precioRecomendado: precio,
-            fechaPublicacion: fechaPublicacion,
+            precio: precio ? numeral(precio.replace(",", ".")).value() : null,
+            fechaPublicacion: fechaPublicacionUTC,
           });
         });
       });
@@ -83,29 +130,42 @@ async function extraerInformacionDePagina(url) {
             codigoRecurso: codigoRecurso7a12,
             codigoArea: (index + 1).toString(),
             dep_id: departamentosDB.find((d) =>
-              d.dep_nombre.toUpperCase().includes(geo.toUpperCase())
+              d.dep_nombre
+                .normalize("NFD") // Descomponer caracteres con diacríticos (tildes)
+                .replace(/[\u0300-\u036f]/g, "") // Eliminar los diacríticos
+                .toUpperCase()
+                .includes(
+                  geo
+                    .normalize("NFD") // Descomponer caracteres con diacríticos (tildes)
+                    .replace(/[\u0300-\u036f]/g, "") // Eliminar los diacríticos
+                    .toUpperCase()
+                )
             )?.dep_id,
             dep_nombre: geo,
-            precioRecomendadoPorDepartamento: precio,
-            fechaPublicacion: fechaPublicacion,
+            precio: precio ? numeral(precio.replace(",", ".")).value() : null,
+            fechaPublicacion: fechaPublicacionUTC,
           });
         });
       });
     });
 
-    const preciosConNombre = precios.map((item) => ({
-      codigoRecurso: item.codigoRecurso,
-      nombreRecurso:
-        descripcionesColumnasPreciosUnitariosUnificados[
-          Number(item.codigoRecurso)
-        ] || "Descripción no disponible",
-      codigoArea: item.codigoArea,
-      dep_id: item.dep_id,
-      dep_nombre: item.dep_nombre,
-      precioRecomendadoPorDepartamento: item.precioRecomendadoPorDepartamento,
-      fechaPublicacion: item.fechaPublicacion,
-    }));
+    const preciosConNombre = precios
+      .filter((item) => item.codigoRecurso !== "N/A")
+      .map((item) => ({
+        codigoRecurso: item.codigoRecurso,
+        nombreRecurso:
+          descripcionesColumnasPreciosUnitariosUnificados[
+            Number(item.codigoRecurso)
+          ] || "Descripción no disponible",
+        codigoArea: item.codigoArea,
+        dep_id: item.dep_id,
+        dep_nombre: item.dep_nombre,
+        precio: item.precio,
+        fechaPublicacion: item.fechaPublicacion,
+      }));
+
     await browser.close();
+
     return preciosConNombre;
   } catch (error) {
     console.error("Error al extraer la información de la página:", error);
@@ -119,6 +179,10 @@ async function main() {
 
   try {
     const precios = await extraerInformacionDePagina(urlPage);
+
+    // Insertar los precios en la base de datos
+    await insertarPreciosEnDB(precios);
+
     console.log("Exportando precios a precios_obtenidos.json...");
     await fs.writeFile(
       "precios_obtenidos.json",
