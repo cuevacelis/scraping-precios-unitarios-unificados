@@ -181,7 +181,7 @@ async function main() {
     const precios = await extraerInformacionDePagina(urlPage);
 
     // Insertar los precios en la base de datos
-    await insertarPreciosEnDB(precios);
+    // await insertarPreciosEnDB(precios);
 
     console.log("Exportando precios a precios_obtenidos.json...");
     await fs.writeFile(
