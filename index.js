@@ -175,13 +175,13 @@ async function extraerInformacionDePagina(url) {
 }
 
 async function main() {
-  const urlPage = "https://busquedas.elperuano.pe/dispositivo/NL/2335224-1";
+  const urlPage = "https://busquedas.elperuano.pe/dispositivo/NL/2316069-1";
 
   try {
     const precios = await extraerInformacionDePagina(urlPage);
 
     // Insertar los precios en la base de datos
-    // await insertarPreciosEnDB(precios);
+    await insertarPreciosEnDB(precios);
 
     console.log("Exportando precios a precios_obtenidos.json...");
     await fs.writeFile(
